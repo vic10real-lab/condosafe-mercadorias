@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Build artifacts
+android/build/
+android/.gradle/
+android/app/build/
+android/captures/
+android/local.properties
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Distribution bundle
+condosafe-pwa.zip

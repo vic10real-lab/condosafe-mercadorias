@@ -1,0 +1,6 @@
+{
+  "appId": "com.condosafe.mercadorias",
+  "appName": "CondoSafe Mercadorias",
+  "webDir": "www",
+  "bundledWebRuntime": false
+}

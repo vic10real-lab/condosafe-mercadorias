@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">CondoSafe Mercadorias</string>
+    <string name="title_activity_main">CondoSafe Mercadorias</string>
+    <string name="package_name">com.condosafe.mercadorias</string>
+    <string name="custom_url_scheme">com.condosafe.mercadorias</string>
+</resources>

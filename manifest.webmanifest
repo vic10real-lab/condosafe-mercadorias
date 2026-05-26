@@ -1,0 +1,20 @@
+{
+  "name": "CondoSafe - Recebimento de Mercadorias",
+  "short_name": "CondoSafe",
+  "description": "Controle de entrada e saída de mercadorias para condomínios.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f172a",
+  "theme_color": "#6366f1",
+  "lang": "pt-BR",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
