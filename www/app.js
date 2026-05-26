@@ -453,44 +453,90 @@ const App = {
         inputEl.value = '';
     },
 
-    toggleCameraScanner(forceState) {
+    async toggleCameraScanner(forceState) {
         const modal = document.getElementById('barcode-modal');
         const shouldStart = (forceState !== undefined) ? forceState : !modal.classList.contains('active');
-        
+
         if (shouldStart) {
+            if (typeof Html5Qrcode === 'undefined') {
+                showToast('Erro', 'Biblioteca do leitor de código de barras não carregou. Verifique sua conexão e recarregue.', false);
+                return;
+            }
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                showToast('Erro de Câmera', 'Este navegador não suporta acesso à câmera. Use HTTPS ou abra em outro navegador.', false);
+                return;
+            }
+            if (this.html5QrcodeScanner) {
+                return;
+            }
+
             modal.classList.add('active');
             playNotificationSound('beep');
-            
-            this.html5QrcodeScanner = new Html5Qrcode("scanner-camera-element");
-            
-            this.html5QrcodeScanner.start(
-                { facingMode: "environment" },
-                {
-                    fps: 10,
-                    qrbox: { width: 250, height: 120 }
-                },
-                (decodedText) => {
-                    this.toggleCameraScanner(false);
-                    this.processScannedCode(decodedText);
-                },
-                (errorMessage) => {
+
+            await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+            const cameraElement = document.getElementById('scanner-camera-element');
+            cameraElement.innerHTML = '';
+
+            try {
+                this.html5QrcodeScanner = new Html5Qrcode('scanner-camera-element', { verbose: false });
+                await this.html5QrcodeScanner.start(
+                    { facingMode: { ideal: 'environment' } },
+                    {
+                        fps: 10,
+                        qrbox: (viewW, viewH) => {
+                            const minEdge = Math.min(viewW, viewH);
+                            const w = Math.max(200, Math.floor(minEdge * 0.85));
+                            const h = Math.max(120, Math.floor(minEdge * 0.55));
+                            return { width: w, height: h };
+                        },
+                        aspectRatio: 1.7777778,
+                        experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+                    },
+                    (decodedText) => {
+                        this.toggleCameraScanner(false);
+                        this.processScannedCode(decodedText);
+                    },
+                    () => { /* per-frame decode misses are noisy; ignore */ }
+                );
+            } catch (err) {
+                console.error('Camera open failed:', err);
+                modal.classList.remove('active');
+                if (this.html5QrcodeScanner) {
+                    try { this.html5QrcodeScanner.clear(); } catch (_) {}
                 }
-            ).catch(err => {
-                console.error("Camera open failed:", err);
-                this.toggleCameraScanner(false);
-                showToast('Erro de Câmera', 'Não foi possível acessar a câmera do dispositivo.', false);
-            });
-            
+                this.html5QrcodeScanner = null;
+
+                const name = err && (err.name || err.code);
+                let msg = 'Não foi possível acessar a câmera do dispositivo.';
+                if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+                    msg = 'Permissão da câmera negada. Habilite o acesso nas configurações do navegador/aparelho.';
+                } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+                    msg = 'Nenhuma câmera foi encontrada neste aparelho.';
+                } else if (name === 'NotReadableError' || name === 'TrackStartError') {
+                    msg = 'A câmera está em uso por outro aplicativo. Feche-o e tente novamente.';
+                } else if (name === 'OverconstrainedError') {
+                    msg = 'Câmera traseira indisponível. Tente novamente após permitir o acesso.';
+                } else if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+                    msg = 'Acesso à câmera exige HTTPS. Abra este app via HTTPS ou localhost.';
+                } else if (err && err.message) {
+                    msg = `Câmera: ${err.message}`;
+                }
+                showToast('Erro de Câmera', msg, false);
+            }
         } else {
             modal.classList.remove('active');
-            if (this.html5QrcodeScanner) {
-                this.html5QrcodeScanner.stop().then(() => {
-                    this.html5QrcodeScanner.clear();
-                    this.html5QrcodeScanner = null;
-                }).catch(err => {
-                    console.error("Camera stop failed:", err);
-                    this.html5QrcodeScanner = null;
-                });
+            const scanner = this.html5QrcodeScanner;
+            this.html5QrcodeScanner = null;
+            if (scanner) {
+                try {
+                    if (typeof scanner.isScanning === 'undefined' || scanner.isScanning) {
+                        await scanner.stop();
+                    }
+                    scanner.clear();
+                } catch (err) {
+                    console.warn('Camera stop failed:', err);
+                }
             }
         }
     },
