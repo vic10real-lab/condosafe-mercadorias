@@ -1187,3 +1187,127 @@ body {
     border: 1px solid rgba(16, 185, 129, 0.3) !important;
 }
 
+/* Mobile-specific enhancements for high visibility and touch targets */
+@media (max-width: 600px) {
+    /* 1. App Layout and spacing */
+    .main-content {
+        padding: 12px;
+        gap: 16px;
+    }
+    
+    .top-bar {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+    
+    .page-title {
+        font-size: 1.6rem;
+    }
+    
+    .page-subtitle {
+        font-size: 0.85rem;
+    }
+    
+    /* 2. Cards and grids */
+    .dashboard-grid {
+        gap: 16px;
+    }
+    
+    .glass-card {
+        padding: 16px;
+        gap: 16px;
+        border-radius: var(--radius-md);
+    }
+    
+    .card-title {
+        font-size: 1.15rem;
+    }
+    
+    /* 3. Inputs, Buttons and touch targets */
+    .form-input {
+        padding: 12px 14px;
+        font-size: 1rem; /* Prevents iOS auto-zoom and improves readability */
+    }
+    
+    .btn {
+        padding: 12px 16px;
+        font-size: 1rem;
+        min-height: 44px; /* standard touch target size */
+    }
+    
+    .btn-sm {
+        padding: 10px 14px;
+        font-size: 0.9rem;
+        min-height: 38px;
+    }
+    
+    /* 4. Table view adjustments */
+    .table-container {
+        border-radius: var(--radius-sm);
+    }
+    
+    .premium-table th, .premium-table td {
+        padding: 12px 14px;
+        font-size: 0.85rem;
+    }
+    
+    /* 5. FULL SCREEN DIGITAL SIGNATURE MODAL ON MOBILE */
+    #delivery-modal.modal-overlay {
+        padding: 0;
+    }
+    
+    #delivery-modal .modal-container {
+        width: 100vw;
+        height: 100vh;
+        max-width: 100vw;
+        max-height: 100vh;
+        border-radius: 0;
+        border: none;
+        display: flex;
+        flex-direction: column;
+    }
+    
+    #delivery-modal .modal-header {
+        padding: 16px 20px;
+    }
+    
+    #delivery-modal .modal-body {
+        flex: 1;
+        overflow-y: auto;
+        padding: 16px 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+    
+    #delivery-modal .delivery-summary-box {
+        grid-template-columns: 1fr; /* Stack on mobile to save horizontal space */
+        gap: 8px;
+        padding: 12px;
+    }
+    
+    #delivery-modal .signature-pad-container {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+    
+    #delivery-modal .signature-canvas {
+        flex: 1;
+        width: 100%;
+        height: auto;
+        min-height: 250px; /* Ensure ample drawing space */
+    }
+    
+    #delivery-modal .modal-footer {
+        padding: 16px 20px;
+        background-color: var(--bg-secondary);
+        display: grid;
+        grid-template-columns: 1fr 1.2fr; /* Make buttons fit nicely side-by-side */
+        gap: 10px;
+    }
+}
+
+

@@ -26,10 +26,10 @@ const DB = {
         // Seed default residents if empty
         if (this.getResidents().length === 0) {
             const defaultResidents = [
-                { id: 'res-1', name: 'Victor Real', cpf: '123.456.789-00', quadra: 'A', lote: '12' },
-                { id: 'res-2', name: 'Maria Eduarda Santos', cpf: '234.567.890-11', quadra: 'B', lote: '45' },
-                { id: 'res-3', name: 'João Carlos Oliveira', cpf: '345.678.901-22', quadra: 'C', lote: '08' },
-                { id: 'res-4', name: 'Ana Beatriz Souza', cpf: '456.789.012-33', quadra: 'D', lote: '54' }
+                { id: 'res-1', name: 'Victor Real', cpf: '123.456.789-00', email: 'victor.real@exemplo.com', quadra: 'A', lote: '12' },
+                { id: 'res-2', name: 'Maria Eduarda Santos', cpf: '234.567.890-11', email: 'maria.santos@exemplo.com', quadra: 'B', lote: '45' },
+                { id: 'res-3', name: 'João Carlos Oliveira', cpf: '345.678.901-22', email: 'joao.oliveira@exemplo.com', quadra: 'C', lote: '08' },
+                { id: 'res-4', name: 'Ana Beatriz Souza', cpf: '456.789.012-33', email: 'ana.souza@exemplo.com', quadra: 'D', lote: '54' }
             ];
             this.saveResidents(defaultResidents);
         }
@@ -196,11 +196,25 @@ const App = {
     selectedResidentToAssign: null, // Selected resident ID in manual mapping flow
     currentDeliveryPackage: null, // Package loaded in signature modal
     
+    // Cloud sync variables
+    googleClientId: null,
+    googleAccessToken: null,
+    googleTokenClient: null,
+    isSyncing: false,
+    autoSyncIntervalId: null,
+    cloudFileId: null,
+    gisScriptLoaded: false,
+    
+    // Photo capture variables
+    capturedPackagePhoto: null,
+    evidenceStream: null,
+    
     init() {
         this.bindEvents();
         this.startLiveClock();
         this.renderAll();
         this.setupKeyboardBarcodeScanInterception();
+        this.initCloudSync();
     },
 
     bindEvents() {
@@ -303,6 +317,24 @@ const App = {
         document.getElementById('btn-close-ocr-modal').addEventListener('click', () => this.closeOcrModal());
         document.getElementById('btn-capture-ocr').addEventListener('click', () => this.captureAndProcessOcr());
 
+        // Evidence Camera Modal
+        const btnCaptureEvidence = document.getElementById('btn-capture-package-photo');
+        if (btnCaptureEvidence) {
+            btnCaptureEvidence.addEventListener('click', () => this.openEvidenceModal());
+        }
+        const btnCloseEvidence = document.getElementById('btn-close-evidence-modal');
+        if (btnCloseEvidence) {
+            btnCloseEvidence.addEventListener('click', () => this.closeEvidenceModal());
+        }
+        const btnSnapEvidence = document.getElementById('btn-snap-evidence');
+        if (btnSnapEvidence) {
+            btnSnapEvidence.addEventListener('click', () => this.captureEvidencePhoto());
+        }
+        const btnRemoveEvidence = document.getElementById('btn-remove-package-photo');
+        if (btnRemoveEvidence) {
+            btnRemoveEvidence.addEventListener('click', () => this.removeEvidencePhoto());
+        }
+
         // Modal close operations
         document.getElementById('btn-close-modal').addEventListener('click', () => this.closeDeliveryModal());
         document.getElementById('btn-cancel-delivery').addEventListener('click', () => this.closeDeliveryModal());
@@ -310,6 +342,32 @@ const App = {
         
         // Canvas Signature Pad drawing events
         this.setupSignatureCanvas();
+
+        // Google Cloud & Sync bindings
+        const btnSaveClientId = document.getElementById('btn-save-client-id');
+        if (btnSaveClientId) {
+            btnSaveClientId.addEventListener('click', () => this.saveGoogleClientId());
+        }
+        const btnToggleVisibility = document.getElementById('btn-toggle-client-id-visibility');
+        if (btnToggleVisibility) {
+            btnToggleVisibility.addEventListener('click', () => this.toggleClientIdVisibility());
+        }
+        const btnCloudConnect = document.getElementById('btn-cloud-connect');
+        if (btnCloudConnect) {
+            btnCloudConnect.addEventListener('click', () => this.connectGoogleDrive());
+        }
+        const btnCloudDisconnect = document.getElementById('btn-cloud-disconnect');
+        if (btnCloudDisconnect) {
+            btnCloudDisconnect.addEventListener('click', () => this.disconnectGoogleDrive());
+        }
+        const btnCloudSyncNow = document.getElementById('btn-cloud-sync-now');
+        if (btnCloudSyncNow) {
+            btnCloudSyncNow.addEventListener('click', () => this.syncGoogleDriveNow());
+        }
+        const chkAutoSync = document.getElementById('cloud-auto-sync-checkbox');
+        if (chkAutoSync) {
+            chkAutoSync.addEventListener('change', (e) => this.toggleAutoSync(e.target.checked));
+        }
     },
 
     startLiveClock() {
@@ -393,6 +451,11 @@ const App = {
                 pageSubtitleDisplay.textContent = 'Log cronológico detalhado de todas as movimentações e assinaturas.';
                 this.renderLogs();
                 break;
+            case 'cloud-sync':
+                pageTitleDisplay.textContent = 'Nuvem & Sincronização';
+                pageSubtitleDisplay.textContent = 'Gerencie a sincronização de dados entre múltiplos aparelhos.';
+                this.updateCloudSyncUI();
+                break;
         }
 
         this.currentTab = tabId;
@@ -453,44 +516,90 @@ const App = {
         inputEl.value = '';
     },
 
-    toggleCameraScanner(forceState) {
+    async toggleCameraScanner(forceState) {
         const modal = document.getElementById('barcode-modal');
         const shouldStart = (forceState !== undefined) ? forceState : !modal.classList.contains('active');
-        
+
         if (shouldStart) {
+            if (typeof Html5Qrcode === 'undefined') {
+                showToast('Erro', 'Biblioteca do leitor de código de barras não carregou. Verifique sua conexão e recarregue.', false);
+                return;
+            }
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                showToast('Erro de Câmera', 'Este navegador não suporta acesso à câmera. Use HTTPS ou abra em outro navegador.', false);
+                return;
+            }
+            if (this.html5QrcodeScanner) {
+                return;
+            }
+
             modal.classList.add('active');
             playNotificationSound('beep');
-            
-            this.html5QrcodeScanner = new Html5Qrcode("scanner-camera-element");
-            
-            this.html5QrcodeScanner.start(
-                { facingMode: "environment" },
-                {
-                    fps: 10,
-                    qrbox: { width: 250, height: 120 }
-                },
-                (decodedText) => {
-                    this.toggleCameraScanner(false);
-                    this.processScannedCode(decodedText);
-                },
-                (errorMessage) => {
+
+            await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+            const cameraElement = document.getElementById('scanner-camera-element');
+            cameraElement.innerHTML = '';
+
+            try {
+                this.html5QrcodeScanner = new Html5Qrcode('scanner-camera-element', { verbose: false });
+                await this.html5QrcodeScanner.start(
+                    { facingMode: { ideal: 'environment' } },
+                    {
+                        fps: 10,
+                        qrbox: (viewW, viewH) => {
+                            const minEdge = Math.min(viewW, viewH);
+                            const w = Math.max(200, Math.floor(minEdge * 0.85));
+                            const h = Math.max(120, Math.floor(minEdge * 0.55));
+                            return { width: w, height: h };
+                        },
+                        aspectRatio: 1.7777778,
+                        experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+                    },
+                    (decodedText) => {
+                        this.toggleCameraScanner(false);
+                        this.processScannedCode(decodedText);
+                    },
+                    () => { /* per-frame decode misses are noisy; ignore */ }
+                );
+            } catch (err) {
+                console.error('Camera open failed:', err);
+                modal.classList.remove('active');
+                if (this.html5QrcodeScanner) {
+                    try { this.html5QrcodeScanner.clear(); } catch (_) {}
                 }
-            ).catch(err => {
-                console.error("Camera open failed:", err);
-                this.toggleCameraScanner(false);
-                showToast('Erro de Câmera', 'Não foi possível acessar a câmera do dispositivo.', false);
-            });
-            
+                this.html5QrcodeScanner = null;
+
+                const name = err && (err.name || err.code);
+                let msg = 'Não foi possível acessar a câmera do dispositivo.';
+                if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+                    msg = 'Permissão da câmera negada. Habilite o acesso nas configurações do navegador/aparelho.';
+                } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+                    msg = 'Nenhuma câmera foi encontrada neste aparelho.';
+                } else if (name === 'NotReadableError' || name === 'TrackStartError') {
+                    msg = 'A câmera está em uso por outro aplicativo. Feche-o e tente novamente.';
+                } else if (name === 'OverconstrainedError') {
+                    msg = 'Câmera traseira indisponível. Tente novamente após permitir o acesso.';
+                } else if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+                    msg = 'Acesso à câmera exige HTTPS. Abra este app via HTTPS ou localhost.';
+                } else if (err && err.message) {
+                    msg = `Câmera: ${err.message}`;
+                }
+                showToast('Erro de Câmera', msg, false);
+            }
         } else {
             modal.classList.remove('active');
-            if (this.html5QrcodeScanner) {
-                this.html5QrcodeScanner.stop().then(() => {
-                    this.html5QrcodeScanner.clear();
-                    this.html5QrcodeScanner = null;
-                }).catch(err => {
-                    console.error("Camera stop failed:", err);
-                    this.html5QrcodeScanner = null;
-                });
+            const scanner = this.html5QrcodeScanner;
+            this.html5QrcodeScanner = null;
+            if (scanner) {
+                try {
+                    if (typeof scanner.isScanning === 'undefined' || scanner.isScanning) {
+                        await scanner.stop();
+                    }
+                    scanner.clear();
+                } catch (err) {
+                    console.warn('Camera stop failed:', err);
+                }
             }
         }
     },
@@ -537,6 +646,11 @@ const App = {
             DB.saveLogs(logs);
             
             showToast('Identificado!', `Encomenda de ${residentName} (${location}) recebida com sucesso!`, true);
+            
+            // Trigger automated email notification in background (no photo is attached in fast barcode scan)
+            if (resident) {
+                this.enviarEmailNotificacao(preRegisteredPkg, resident, null);
+            }
             
             this.renderStats();
             this.renderPendingPackages();
@@ -680,6 +794,9 @@ const App = {
                 setTimeout(() => {
                     this.closeOcrModal();
                     
+                    // Auto-attach the OCR captured image as evidence photo!
+                    this.setEvidencePhoto(imageData);
+                    
                     // Trigger manual assignment flow
                     this.scannedCodeToAssign = foundBarcode || '';
                     const handlerEl = document.getElementById('unregistered-package-handler');
@@ -702,7 +819,7 @@ const App = {
                     }
                     document.getElementById('btn-confirm-assignment').disabled = false;
                     
-                    showToast('OCR Concluído', `Morador auto-selecionado: ${matchedResident.name}`, true);
+                    showToast('OCR Concluído', `Morador auto-selecionado: ${matchedResident.name} e imagem anexada!`, true);
                 }, 1500);
             } else {
                 resultText.textContent = 'Não foi possível encontrar o morador com exatidão.';
@@ -794,7 +911,8 @@ const App = {
             receivedAt: new Date().toISOString(),
             receivedBy: 'Portaria A',
             deliveredAt: null,
-            signature: null
+            signature: null,
+            packagePhoto: this.capturedPackagePhoto || null
         };
         
         packages.unshift(newPkg);
@@ -812,6 +930,12 @@ const App = {
         DB.saveLogs(logs);
         
         showToast('Sucesso', `Encomenda vinculada e registrada para ${resident.name}!`, true);
+        
+        // Trigger automated email notification in background
+        this.enviarEmailNotificacao(newPkg, resident, this.capturedPackagePhoto);
+        
+        // Reset photo capture
+        this.removeEvidencePhoto();
         
         this.resetUnregisteredFlow();
         this.renderStats();
@@ -922,6 +1046,20 @@ const App = {
         
         // Clear canvas and reset signature
         this.clearCanvas();
+
+        // Dynamically resize canvas to prevent stretching or coordination offset on mobile and tablet
+        const canvas = document.getElementById('signature-pad');
+        setTimeout(() => {
+            const rect = canvas.getBoundingClientRect();
+            canvas.width = rect.width;
+            canvas.height = rect.height;
+            
+            const ctx = canvas.getContext('2d');
+            ctx.strokeStyle = '#0f172a'; // Deep dark ink
+            ctx.lineWidth = 3.5;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+        }, 150);
     },
 
     closeDeliveryModal() {
@@ -1113,6 +1251,7 @@ const App = {
                 </div>
                 <div class="resident-details">
                     <div><strong>CPF:</strong> ${res.cpf}</div>
+                    <div><strong>E-mail:</strong> ${res.email || 'Não cadastrado'}</div>
                     <div><strong>Unidade:</strong> Quadra ${res.quadra}, Lote ${res.lote}</div>
                     <div style="margin-top: 4px; display: flex; align-items: center; gap: 6px;">
                         <span class="badge ${activeCount > 0 ? 'badge-pending' : 'badge-success'}" style="font-size: 0.7rem;">
@@ -1169,6 +1308,7 @@ const App = {
         document.getElementById('resident-id-input').value = res.id;
         document.getElementById('res-name-input').value = res.name;
         document.getElementById('res-cpf-input').value = res.cpf;
+        document.getElementById('res-email-input').value = res.email || '';
         document.getElementById('res-quadra-input').value = res.quadra;
         document.getElementById('res-lote-input').value = res.lote;
         
@@ -1212,6 +1352,7 @@ const App = {
         const id = document.getElementById('resident-id-input').value;
         const name = document.getElementById('res-name-input').value.trim();
         const cpf = document.getElementById('res-cpf-input').value.trim();
+        const email = document.getElementById('res-email-input').value.trim();
         const quadra = document.getElementById('res-quadra-input').value.trim();
         const lote = document.getElementById('res-lote-input').value.trim();
         
@@ -1221,7 +1362,7 @@ const App = {
             // Edit mode
             const index = residents.findIndex(r => r.id === id);
             if (index !== -1) {
-                residents[index] = { id, name, cpf, quadra, lote };
+                residents[index] = { id, name, cpf, email, quadra, lote };
                 showToast('Atualizado', 'Cadastro do morador atualizado com sucesso!', true);
             }
         } else {
@@ -1238,6 +1379,7 @@ const App = {
                 id: 'res-' + Date.now(),
                 name,
                 cpf,
+                email,
                 quadra,
                 lote
             };
@@ -1446,6 +1588,631 @@ const App = {
             
             timeline.appendChild(item);
         });
+    },
+
+    // ==========================================
+    // 9. GOOGLE DRIVE SYNC ENGINE
+    // ==========================================
+    initCloudSync() {
+        // Load settings from localStorage
+        this.googleClientId = localStorage.getItem('condosafe_google_client_id') || '';
+        this.googleAccessToken = localStorage.getItem('condosafe_google_access_token') || '';
+        
+        // Populate inputs
+        const clientIdInput = document.getElementById('google-client-id-input');
+        if (clientIdInput) {
+            clientIdInput.value = this.googleClientId;
+        }
+
+        const autoSyncCheckbox = document.getElementById('cloud-auto-sync-checkbox');
+        const autoSyncEnabled = localStorage.getItem('condosafe_auto_sync') !== 'false'; // default true
+        if (autoSyncCheckbox) {
+            autoSyncCheckbox.checked = autoSyncEnabled;
+        }
+
+        // Load GIS Library dynamically
+        this.loadGisLibrary();
+
+        // Update UI
+        this.updateCloudSyncUI();
+
+        // If access token already exists, try to sync and start auto-sync
+        if (this.googleAccessToken) {
+            this.syncGoogleDriveNow().then(() => {
+                if (autoSyncEnabled) {
+                    this.toggleAutoSync(true);
+                }
+            });
+        }
+    },
+
+    loadGisLibrary() {
+        if (document.getElementById('google-gis-script')) {
+            this.gisScriptLoaded = true;
+            return;
+        }
+        const script = document.createElement('script');
+        script.id = 'google-gis-script';
+        script.src = 'https://accounts.google.com/gsi/client';
+        script.async = true;
+        script.defer = true;
+        script.onload = () => {
+            this.gisScriptLoaded = true;
+            console.log('Google Identity Services SDK loaded.');
+        };
+        document.body.appendChild(script);
+    },
+
+    saveGoogleClientId() {
+        const input = document.getElementById('google-client-id-input');
+        const value = input ? input.value.trim() : '';
+        
+        if (!value) {
+            showToast('Aviso', 'Por favor, insira um Client ID válido.', false);
+            return;
+        }
+        
+        this.googleClientId = value;
+        localStorage.setItem('condosafe_google_client_id', value);
+        showToast('Configuração Salva', 'Google Client ID registrado com sucesso!', true);
+        
+        // Rebuild token client
+        this.googleTokenClient = null;
+    },
+
+    toggleClientIdVisibility() {
+        const input = document.getElementById('google-client-id-input');
+        const btn = document.getElementById('btn-toggle-client-id-visibility');
+        
+        if (input) {
+            if (input.type === 'password') {
+                input.type = 'text';
+                if (btn) btn.innerHTML = '<i class="fa-regular fa-eye-slash"></i>';
+            } else {
+                input.type = 'password';
+                if (btn) btn.innerHTML = '<i class="fa-regular fa-eye"></i>';
+            }
+        }
+    },
+
+    connectGoogleDrive() {
+        if (!this.googleClientId) {
+            showToast('Erro', 'Por favor, insira e salve o seu Google Client ID nas configurações antes de conectar.', false);
+            const tabId = 'cloud-sync';
+            this.switchTab(tabId);
+            const clientIdInput = document.getElementById('google-client-id-input');
+            if (clientIdInput) clientIdInput.focus();
+            return;
+        }
+
+        if (!this.gisScriptLoaded) {
+            showToast('Aguarde', 'Carregando biblioteca do Google. Tente novamente em alguns segundos.', false);
+            this.loadGisLibrary();
+            return;
+        }
+
+        try {
+            if (!this.googleTokenClient) {
+                this.googleTokenClient = google.accounts.oauth2.initTokenClient({
+                    client_id: this.googleClientId,
+                    scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/gmail.send',
+                    callback: async (response) => {
+                        if (response.error) {
+                            console.error("Auth Error:", response);
+                            showToast('Erro de Conexão', `Falha ao autenticar: ${response.error_description || response.error}`, false);
+                            return;
+                        }
+                        this.googleAccessToken = response.access_token;
+                        localStorage.setItem('condosafe_google_access_token', this.googleAccessToken);
+                        showToast('Conectado!', 'Aplicativo conectado ao Google Drive com sucesso!', true);
+                        this.updateCloudSyncUI();
+                        await this.syncGoogleDriveNow();
+                        
+                        const autoSyncCheckbox = document.getElementById('cloud-auto-sync-checkbox');
+                        if (autoSyncCheckbox && autoSyncCheckbox.checked) {
+                            this.toggleAutoSync(true);
+                        }
+                    }
+                });
+            }
+            this.googleTokenClient.requestAccessToken({ prompt: 'consent' });
+        } catch (err) {
+            console.error("GIS Token Client Init Failed:", err);
+            showToast('Erro', 'Não foi possível inicializar o cliente do Google. Verifique se o seu Client ID está correto.', false);
+        }
+    },
+
+    disconnectGoogleDrive() {
+        this.googleAccessToken = null;
+        localStorage.removeItem('condosafe_google_access_token');
+        this.cloudFileId = null;
+        this.toggleAutoSync(false);
+        this.updateCloudSyncUI();
+        showToast('Desconectado', 'Sua conta do Google foi desconectada.', true);
+    },
+
+    toggleAutoSync(enabled) {
+        localStorage.setItem('condosafe_auto_sync', enabled);
+        if (this.autoSyncIntervalId) {
+            clearInterval(this.autoSyncIntervalId);
+            this.autoSyncIntervalId = null;
+        }
+        
+        if (enabled && this.googleAccessToken) {
+            this.autoSyncIntervalId = setInterval(() => {
+                this.syncGoogleDriveNow(true); // Silent background sync
+            }, 30000); // 30 seconds
+            console.log('Background Auto-sync activated.');
+        }
+    },
+
+    updateCloudSyncUI() {
+        const container = document.getElementById('cloud-status-container');
+        const iconWrapper = document.getElementById('cloud-status-icon-wrapper');
+        const icon = document.getElementById('cloud-status-icon');
+        const title = document.getElementById('cloud-status-title');
+        const desc = document.getElementById('cloud-status-desc');
+        const btnConnect = document.getElementById('btn-cloud-connect');
+        const btnDisconnect = document.getElementById('btn-cloud-disconnect');
+        const syncControls = document.getElementById('cloud-sync-controls');
+
+        if (this.googleAccessToken) {
+            // Connected UI
+            if (iconWrapper) {
+                iconWrapper.className = 'cloud-success';
+                iconWrapper.style.backgroundColor = 'rgba(16, 185, 129, 0.1)';
+                iconWrapper.style.color = 'var(--success)';
+            }
+            if (icon) icon.className = 'fa-solid fa-cloud-arrow-up cloud-active';
+            if (title) title.textContent = 'Conectado ao Google Drive';
+            if (desc) desc.textContent = 'A sincronização em nuvem está ativa. Seus dados estão protegidos.';
+            if (btnConnect) btnConnect.style.display = 'none';
+            if (btnDisconnect) btnDisconnect.style.display = 'inline-flex';
+            if (syncControls) syncControls.style.display = 'flex';
+        } else {
+            // Disconnected UI
+            if (iconWrapper) {
+                iconWrapper.className = '';
+                iconWrapper.style.backgroundColor = 'rgba(148, 163, 184, 0.1)';
+                iconWrapper.style.color = 'var(--text-muted)';
+            }
+            if (icon) icon.className = 'fa-solid fa-cloud';
+            if (title) title.textContent = 'Nuvem Desconectada';
+            if (desc) desc.textContent = 'Os dados estão sendo salvos apenas localmente neste aparelho.';
+            if (btnConnect) btnConnect.style.display = 'inline-flex';
+            if (btnDisconnect) btnDisconnect.style.display = 'none';
+            if (syncControls) syncControls.style.display = 'none';
+        }
+    },
+
+    async syncGoogleDriveNow(silent = false) {
+        if (!this.googleAccessToken) return;
+        if (this.isSyncing) return;
+        
+        this.isSyncing = true;
+        const syncIcon = document.getElementById('btn-sync-icon');
+        if (syncIcon) syncIcon.classList.add('fa-spin');
+        
+        console.log('Iniciando sincronização com o Google Drive...');
+        
+        try {
+            // 1. Search for existing file
+            let fileId = this.cloudFileId;
+            if (!fileId) {
+                fileId = await this.findDbFileOnDrive();
+                this.cloudFileId = fileId;
+            }
+            
+            const localData = {
+                residents: DB.getResidents(),
+                packages: DB.getPackages(),
+                logs: DB.getLogs()
+            };
+            
+            // 2. If file not found, create new one
+            if (!fileId) {
+                console.log('Banco de dados remoto não localizado no Drive. Criando novo arquivo...');
+                fileId = await this.createDbFileOnDrive();
+                this.cloudFileId = fileId;
+                await this.uploadToDrive(fileId, localData);
+                
+                const timeStr = new Date().toLocaleTimeString('pt-BR');
+                const lastSyncEl = document.getElementById('cloud-last-sync-time');
+                if (lastSyncEl) lastSyncEl.textContent = `Última sincronização (upload inicial): ${timeStr}`;
+                
+                if (!silent) showToast('Nuvem Inicializada', 'Banco de dados criado e carregado no Google Drive!', true);
+            } else {
+                // 3. File exists, download and merge
+                console.log(`Banco de dados remoto localizado (ID: ${fileId}). Baixando dados...`);
+                const remoteData = await this.downloadFromDrive(fileId);
+                
+                if (remoteData && remoteData.residents && remoteData.packages) {
+                    console.log('Mesclando dados locais com remotos...');
+                    const mergedData = this.mergeDatabases(localData, remoteData);
+                    
+                    // Save locally
+                    DB.saveResidents(mergedData.residents);
+                    DB.savePackages(mergedData.packages);
+                    DB.saveLogs(mergedData.logs);
+                    
+                    // Upload merged data back
+                    await this.uploadToDrive(fileId, mergedData);
+                    
+                    // Refresh current UI
+                    this.renderAll();
+                    
+                    const timeStr = new Date().toLocaleTimeString('pt-BR');
+                    const lastSyncEl = document.getElementById('cloud-last-sync-time');
+                    if (lastSyncEl) lastSyncEl.textContent = `Última sincronização bem sucedida: ${timeStr}`;
+                    
+                    if (!silent) showToast('Sincronizado!', 'Seus dados foram mesclados e sincronizados com a nuvem.', true);
+                } else {
+                    // Corrupted or empty file? Just write local data
+                    await this.uploadToDrive(fileId, localData);
+                }
+            }
+        } catch (err) {
+            console.error("Cloud Sync Error:", err);
+            if (!silent) showToast('Erro de Sincronização', 'Não foi possível sincronizar com o Google Drive.', false);
+        } finally {
+            this.isSyncing = false;
+            if (syncIcon) syncIcon.classList.remove('fa-spin');
+        }
+    },
+
+    handleExpiredToken() {
+        console.warn('Google Access Token expired or unauthorized.');
+        this.googleAccessToken = null;
+        localStorage.removeItem('condosafe_google_access_token');
+        this.updateCloudSyncUI();
+        showToast('Sessão Expirada', 'Conexão com Google Drive expirou. Clique em Conectar Conta novamente.', false);
+    },
+
+    async findDbFileOnDrive() {
+        const query = encodeURIComponent("name = 'condosafe_db.json' and trashed = false");
+        const url = `https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id,name)`;
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${this.googleAccessToken}`
+            }
+        });
+        if (!response.ok) {
+            if (response.status === 401) {
+                this.handleExpiredToken();
+                return null;
+            }
+            throw new Error(`Search failed: ${response.statusText}`);
+        }
+        const data = await response.json();
+        return data.files && data.files.length > 0 ? data.files[0].id : null;
+    },
+
+    async downloadFromDrive(fileId) {
+        const url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${this.googleAccessToken}`
+            }
+        });
+        if (!response.ok) {
+            throw new Error(`Download failed: ${response.statusText}`);
+        }
+        return await response.json();
+    },
+
+    async createDbFileOnDrive() {
+        const url = 'https://www.googleapis.com/drive/v3/files';
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${this.googleAccessToken}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                name: 'condosafe_db.json',
+                mimeType: 'application/json'
+            })
+        });
+        if (!response.ok) {
+            throw new Error(`Create failed: ${response.statusText}`);
+        }
+        const data = await response.json();
+        return data.id;
+    },
+
+    async uploadToDrive(fileId, dbData) {
+        const url = `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`;
+        const response = await fetch(url, {
+            method: 'PATCH',
+            headers: {
+                'Authorization': `Bearer ${this.googleAccessToken}`,
+                'Content-Type': 'application/json; charset=UTF-8'
+            },
+            body: JSON.stringify(dbData)
+        });
+        if (!response.ok) {
+            throw new Error(`Upload failed: ${response.statusText}`);
+        }
+        return await response.json();
+    },
+
+    mergeDatabases(local, remote) {
+        // 1. Merge Residents
+        const residentsMap = new Map();
+        [...remote.residents, ...local.residents].forEach(r => {
+            residentsMap.set(r.id, r);
+        });
+        const mergedResidents = Array.from(residentsMap.values());
+
+        // 2. Merge Packages
+        const packagesMap = new Map();
+        const getStatusPriority = (status) => {
+            if (status === 'Entregue') return 3;
+            if (status === 'Aguardando Retirada') return 2;
+            return 1; // Pré-cadastrada
+        };
+
+        [...remote.packages, ...local.packages].forEach(p => {
+            if (packagesMap.has(p.id)) {
+                const existing = packagesMap.get(p.id);
+                const p1Priority = getStatusPriority(existing.status);
+                const p2Priority = getStatusPriority(p.status);
+                if (p2Priority > p1Priority) {
+                    packagesMap.set(p.id, p);
+                }
+            } else {
+                packagesMap.set(p.id, p);
+            }
+        });
+        const mergedPackages = Array.from(packagesMap.values());
+
+        // 3. Merge Logs
+        const logsMap = new Map();
+        [...remote.logs, ...local.logs].forEach(l => {
+            logsMap.set(l.id, l);
+        });
+        const mergedLogs = Array.from(logsMap.values());
+        mergedLogs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+        return {
+            residents: mergedResidents,
+            packages: mergedPackages,
+            logs: mergedLogs
+        };
+    },
+
+    // ==========================================
+    // 10. EVIDENCE PHOTO CAMERA & GMAIL NOTIFICATION ENGINE
+    // ==========================================
+    async openEvidenceModal() {
+        const modal = document.getElementById('evidence-modal');
+        const video = document.getElementById('evidence-video');
+        
+        modal.classList.add('active');
+        
+        try {
+            this.evidenceStream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: "environment" }
+            });
+            video.srcObject = this.evidenceStream;
+        } catch (err) {
+            console.error("Evidence Camera error:", err);
+            showToast('Erro de Câmera', 'Não foi possível acessar a câmera para foto de evidência.', false);
+            this.closeEvidenceModal();
+        }
+    },
+
+    closeEvidenceModal() {
+        document.getElementById('evidence-modal').classList.remove('active');
+        if (this.evidenceStream) {
+            this.evidenceStream.getTracks().forEach(track => track.stop());
+            this.evidenceStream = null;
+        }
+    },
+
+    captureEvidencePhoto() {
+        const video = document.getElementById('evidence-video');
+        const canvas = document.getElementById('evidence-canvas');
+        
+        // Shrink canvas resolution for lightweight storage and email attachments
+        canvas.width = 400;
+        canvas.height = 300;
+        
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        
+        // Compressed JPEG
+        const dataURL = canvas.toDataURL('image/jpeg', 0.7);
+        
+        this.setEvidencePhoto(dataURL);
+        this.closeEvidenceModal();
+        showToast('Foto Anexada', 'Imagem do pacote registrada como evidência!', true);
+    },
+
+    setEvidencePhoto(dataURL) {
+        this.capturedPackagePhoto = dataURL;
+        
+        const preview = document.getElementById('package-photo-preview');
+        const container = document.getElementById('package-photo-preview-container');
+        const status = document.getElementById('package-photo-status');
+        
+        if (preview) preview.src = dataURL;
+        if (container) container.style.display = 'block';
+        if (status) status.textContent = 'Foto anexada com sucesso!';
+    },
+
+    removeEvidencePhoto() {
+        this.capturedPackagePhoto = null;
+        
+        const container = document.getElementById('package-photo-preview-container');
+        const status = document.getElementById('package-photo-status');
+        const preview = document.getElementById('package-photo-preview');
+        
+        if (preview) preview.src = '';
+        if (container) container.style.display = 'none';
+        if (status) status.textContent = 'Nenhuma imagem anexada.';
+    },
+
+    async enviarEmailNotificacao(pkg, resident, photoDataUrl) {
+        // Validate if cloud/gmail login is active
+        if (!this.googleAccessToken) {
+            console.log('Sincronização em nuvem inativa. E-mail de notificação pulado.');
+            return;
+        }
+
+        if (!resident || !resident.email) {
+            console.warn(`Morador ${resident ? resident.name : 'Desconhecido'} não possui e-mail cadastrado.`);
+            const logs = DB.getLogs();
+            logs.unshift({
+                id: 'log-' + Date.now(),
+                timestamp: new Date().toISOString(),
+                type: 'ENTRADA',
+                packageCode: pkg.code,
+                description: `Aviso de e-mail cancelado: Morador ${resident ? resident.name : ''} sem e-mail cadastrado.`
+            });
+            DB.saveLogs(logs);
+            this.renderLogs();
+            return;
+        }
+
+        console.log(`Disparando e-mail de notificação para ${resident.email}...`);
+
+        try {
+            // Build modern HTML email
+            const emailSubject = `CondoSafe - Encomenda Recebida na Portaria (${pkg.code})`;
+            const emailBody = `
+                <div style="font-family: sans-serif; background-color: #f8fafc; padding: 40px 20px; color: #0f172a; text-align: center;">
+                    <div style="max-width: 500px; margin: 0 auto; background: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); text-align: left;">
+                        <div style="background: linear-gradient(135deg, #6366f1, #4f46e5); padding: 30px; color: white; text-align: center;">
+                            <h1 style="margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.5px;">CondoSafe</h1>
+                            <p style="margin: 5px 0 0 0; font-size: 14px; opacity: 0.85; text-transform: uppercase; letter-spacing: 1px;">Mercadoria Recebida</p>
+                        </div>
+                        <div style="padding: 30px;">
+                            <h2 style="margin: 0 0 15px 0; font-size: 18px; font-weight: 600;">Olá, ${resident.name}!</h2>
+                            <p style="margin: 0 0 20px 0; font-size: 14px; color: #475569; line-height: 1.6;">
+                                Informamos que uma nova mercadoria para sua unidade (<strong>Quadra ${resident.quadra}, Lote ${resident.lote}</strong>) foi recebida e encontra-se guardada em segurança na portaria do condomínio.
+                            </p>
+                            
+                            <div style="background-color: #f1f5f9; border-radius: 8px; padding: 16px; margin-bottom: 20px; font-size: 14px; border-left: 4px solid #6366f1;">
+                                <div style="margin-bottom: 8px;"><strong>Código de Rastreio:</strong> <span style="font-family: monospace; font-weight: bold; color: #4f46e5;">${pkg.code}</span></div>
+                                <div style="margin-bottom: 8px;"><strong>Data e Hora:</strong> ${new Date(pkg.receivedAt || Date.now()).toLocaleString('pt-BR')}</div>
+                                <div><strong>Operador:</strong> Portaria A</div>
+                            </div>
+                            
+                            ${photoDataUrl ? `
+                            <p style="margin: 0 0 10px 0; font-size: 14px; font-weight: 600; color: #475569;">Foto de Evidência do Pacote:</p>
+                            <div style="border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; margin-bottom: 20px; background: #000; text-align: center;">
+                                <img src="cid:pacote_anexo" style="max-width: 100%; display: block; margin: 0 auto; max-height: 250px; object-fit: contain;" alt="Foto do Pacote">
+                            </div>` : ''}
+                            
+                            <p style="margin: 0 0 5px 0; font-size: 14px; color: #475569; line-height: 1.6;">
+                                Por favor, dirija-se à portaria com um dispositivo móvel ou documento de identificação para retirar seu pacote. Será solicitada sua assinatura digital na entrega.
+                            </p>
+                        </div>
+                        <div style="background-color: #f8fafc; padding: 20px; text-align: center; border-top: 1px solid #e2e8f0; font-size: 12px; color: #94a3b8;">
+                            CondoSafe &copy; 2026 - Controle Inteligente de Portaria
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            // Compile MIME multipart message
+            const rawMessage = this.buildMimeMessage(resident.email, emailSubject, emailBody, photoDataUrl);
+
+            // Fetch to Gmail API send endpoint
+            const url = 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send';
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${this.googleAccessToken}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    raw: rawMessage
+                })
+            });
+
+            if (!response.ok) {
+                if (response.status === 401) {
+                    this.handleExpiredToken();
+                    return;
+                }
+                throw new Error(`Gmail API response error: ${response.statusText}`);
+            }
+
+            console.log(`E-mail de notificação enviado para ${resident.email}.`);
+            
+            // Log entry success
+            const logs = DB.getLogs();
+            logs.unshift({
+                id: 'log-' + Date.now(),
+                timestamp: new Date().toISOString(),
+                type: 'ENTRADA',
+                packageCode: pkg.code,
+                description: `Notificação enviada por e-mail para ${resident.name} (${resident.email})${photoDataUrl ? ' contendo imagem de evidência' : ''}.`
+            });
+            DB.saveLogs(logs);
+            this.renderLogs();
+
+        } catch (err) {
+            console.error("Failed to dispatch Gmail Notification:", err);
+            const logs = DB.getLogs();
+            logs.unshift({
+                id: 'log-' + Date.now(),
+                timestamp: new Date().toISOString(),
+                type: 'ENTRADA',
+                packageCode: pkg.code,
+                description: `Erro ao disparar e-mail de notificação para ${resident.email}: ${err.message}`
+            });
+            DB.saveLogs(logs);
+            this.renderLogs();
+        }
+    },
+
+    buildMimeMessage(to, subject, bodyHtml, imageBase64DataUrl) {
+        const boundary = "boundary_condosafe_" + Date.now().toString(16);
+        let mail = [
+            `To: ${to}`,
+            `Subject: ${subject}`,
+            `MIME-Version: 1.0`,
+            `Content-Type: multipart/mixed; boundary="${boundary}"`,
+            ``,
+            `--${boundary}`,
+            `Content-Type: text/html; charset="UTF-8"`,
+            `Content-Transfer-Encoding: 7bit`,
+            ``,
+            bodyHtml,
+            ``
+        ];
+
+        if (imageBase64DataUrl) {
+            const parts = imageBase64DataUrl.split(',');
+            const mimeType = parts[0].match(/:(.*?);/)[1];
+            const base64Data = parts[1];
+            
+            mail = mail.concat([
+                `--${boundary}`,
+                `Content-Type: ${mimeType}; name="pacote.jpg"`,
+                `Content-ID: <pacote_anexo>`,
+                `Content-Disposition: inline; filename="pacote.jpg"`,
+                `Content-Transfer-Encoding: base64`,
+                ``,
+                base64Data,
+                ``
+            ]);
+        }
+
+        mail.push(`--${boundary}--`);
+
+        // Safe Base64URL encoding compliant with Gmail REST API
+        const rawMimeString = mail.join('\r\n');
+        const raw = btoa(unescape(encodeURIComponent(rawMimeString)))
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=+$/, '');
+        return raw;
     }
 };
 

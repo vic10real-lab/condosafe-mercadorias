@@ -5,7 +5,7 @@
   "main": "www/index.html",
   "scripts": {
     "start": "live-server",
-    "build": "echo \"Arquivos estáticos já estão prontos em www/\"",
+    "build": "powershell -Command \"Copy-Item index.html, styles.css, app.js -Destination www -Force\"",
     "capacitor:sync": "cap sync",
     "android:open": "cap open android"
   },
