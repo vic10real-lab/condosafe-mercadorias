@@ -1046,6 +1046,20 @@ const App = {
         
         // Clear canvas and reset signature
         this.clearCanvas();
+
+        // Dynamically resize canvas to prevent stretching or coordination offset on mobile and tablet
+        const canvas = document.getElementById('signature-pad');
+        setTimeout(() => {
+            const rect = canvas.getBoundingClientRect();
+            canvas.width = rect.width;
+            canvas.height = rect.height;
+            
+            const ctx = canvas.getContext('2d');
+            ctx.strokeStyle = '#0f172a'; // Deep dark ink
+            ctx.lineWidth = 3.5;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+        }, 150);
     },
 
     closeDeliveryModal() {
