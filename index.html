@@ -24,8 +24,76 @@
     <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
     <!-- Tesseract.js for OCR -->
     <script src="https://unpkg.com/tesseract.js@v2.1.0/dist/tesseract.min.js"></script>
+    <!-- Firebase SDK (compat namespaced API) -->
+    <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-storage-compat.js"></script>
 </head>
 <body>
+
+    <!-- Auth Gate: Firebase Config Setup + Login (full-screen overlay) -->
+    <div class="modal-overlay active" id="auth-gate" style="background: rgba(15, 23, 42, 0.95); z-index: 9999;">
+        <div class="modal-container" style="max-width: 460px;">
+            <header class="modal-header">
+                <h3 class="modal-title" id="auth-gate-title">
+                    <i class="fa-solid fa-shield-halved"></i>
+                    Acesso CondoSafe
+                </h3>
+            </header>
+
+            <!-- Step A: Firebase Config (shown on first run only) -->
+            <div class="modal-body" id="auth-firebase-config" style="display: none;">
+                <p style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 16px;">
+                    Primeira configuração: cole abaixo o objeto <strong>firebaseConfig</strong> gerado no Firebase Console (Project Settings → Your apps → SDK setup).
+                </p>
+                <div class="form-group">
+                    <label for="firebase-config-input" class="form-label">firebaseConfig (JSON ou objeto JS)</label>
+                    <textarea id="firebase-config-input" class="form-input" rows="9" style="font-family: monospace; font-size: 0.8rem; resize: vertical;" placeholder='{
+  "apiKey": "AIza...",
+  "authDomain": "seu-projeto.firebaseapp.com",
+  "projectId": "seu-projeto",
+  "storageBucket": "seu-projeto.appspot.com",
+  "messagingSenderId": "...",
+  "appId": "1:..."
+}'></textarea>
+                </div>
+                <button class="btn btn-primary" id="btn-save-firebase-config" style="width: 100%;">
+                    <i class="fa-solid fa-floppy-disk"></i> Salvar e continuar
+                </button>
+            </div>
+
+            <!-- Step B: Login -->
+            <div class="modal-body" id="auth-login" style="display: none;">
+                <p style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 16px;">
+                    Entre com o e-mail e senha cadastrados pela administração da portaria.
+                </p>
+                <form id="login-form" style="display: flex; flex-direction: column; gap: 12px;">
+                    <div class="form-group">
+                        <label for="login-email" class="form-label">E-mail</label>
+                        <input type="email" id="login-email" class="form-input" placeholder="portaria1@condosafe.local" required autocomplete="username">
+                    </div>
+                    <div class="form-group">
+                        <label for="login-password" class="form-label">Senha</label>
+                        <input type="password" id="login-password" class="form-input" placeholder="••••••••" required autocomplete="current-password">
+                    </div>
+                    <p id="login-error" style="color: var(--danger); font-size: 0.8rem; min-height: 18px; margin: 0;"></p>
+                    <button type="submit" class="btn btn-success" style="width: 100%;">
+                        <i class="fa-solid fa-right-to-bracket"></i> Entrar
+                    </button>
+                    <button type="button" class="btn btn-secondary btn-sm" id="btn-reset-firebase-config" style="font-size: 0.75rem; margin-top: 4px;">
+                        <i class="fa-solid fa-gear"></i> Reconfigurar Firebase
+                    </button>
+                </form>
+            </div>
+
+            <!-- Step C: Initializing -->
+            <div class="modal-body" id="auth-loading" style="text-align: center; padding: 40px;">
+                <i class="fa-solid fa-circle-notch fa-spin" style="font-size: 2rem; color: var(--primary); margin-bottom: 12px;"></i>
+                <p style="color: var(--text-secondary); font-size: 0.9rem;">Inicializando...</p>
+            </div>
+        </div>
+    </div>
 
     <div class="app-container">
         <!-- Sidebar Navigation -->
@@ -458,103 +526,83 @@
             <!-- Cloud & Sync Panel -->
             <section class="tab-panel" id="tab-cloud-sync">
                 <div class="dashboard-grid" style="grid-template-columns: 1.2fr 1.8fr;">
-                    <!-- Left: Connection Status & Quick Actions -->
+                    <!-- Left: Connection Status & Account -->
                     <div class="glass-card" style="border-top: 4px solid #3b82f6;">
                         <h3 class="card-title">
                             <i class="fa-solid fa-cloud-arrow-up"></i>
-                            Sincronização em Nuvem
+                            Conta e Sincronização
                         </h3>
-                        
-                        <!-- Connection Status Card -->
+
                         <div id="cloud-status-container" style="background-color: var(--bg-primary); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 20px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 12px; margin-bottom: 8px;">
-                            <div id="cloud-status-icon-wrapper" style="width: 60px; height: 60px; border-radius: 50%; background-color: rgba(148, 163, 184, 0.1); color: var(--text-muted); display: flex; align-items: center; justify-content: center; font-size: 1.8rem; transition: all var(--transition-normal);">
-                                <i class="fa-solid fa-cloud" id="cloud-status-icon"></i>
+                            <div id="cloud-status-icon-wrapper" style="width: 60px; height: 60px; border-radius: 50%; background-color: rgba(16, 185, 129, 0.15); color: var(--success); display: flex; align-items: center; justify-content: center; font-size: 1.8rem;">
+                                <i class="fa-solid fa-cloud-arrow-up" id="cloud-status-icon"></i>
                             </div>
                             <div>
-                                <h4 id="cloud-status-title" style="font-family: var(--font-heading); font-size: 1.1rem; margin-bottom: 4px;">Nuvem Desconectada</h4>
-                                <p id="cloud-status-desc" style="font-size: 0.8rem; color: var(--text-secondary);">Os dados estão sendo salvos apenas localmente neste aparelho.</p>
+                                <h4 id="cloud-status-title" style="font-family: var(--font-heading); font-size: 1.1rem; margin-bottom: 4px;">Sincronizado em tempo real</h4>
+                                <p id="cloud-status-desc" style="font-size: 0.8rem; color: var(--text-secondary);">As alterações aparecem instantaneamente em todos os dispositivos.</p>
                             </div>
-                            
-                            <button class="btn btn-primary" id="btn-cloud-connect" style="width: 100%; margin-top: 8px;">
-                                <i class="fa-brands fa-google"></i> Conectar Conta Google
-                            </button>
-                            <button class="btn btn-danger btn-sm" id="btn-cloud-disconnect" style="width: 100%; display: none; margin-top: 8px;">
-                                <i class="fa-solid fa-right-from-bracket"></i> Desconectar Conta
+
+                            <div style="width: 100%; border-top: 1px solid var(--border-color); padding-top: 14px; margin-top: 4px;">
+                                <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 4px;">Conectado como</div>
+                                <div id="cloud-user-email" style="font-family: monospace; font-size: 0.9rem; color: var(--text-primary); word-break: break-all;">—</div>
+                            </div>
+
+                            <button class="btn btn-danger btn-sm" id="btn-cloud-disconnect" style="width: 100%; margin-top: 8px;">
+                                <i class="fa-solid fa-right-from-bracket"></i> Sair desta conta
                             </button>
                         </div>
 
-                        <!-- Sync Controls (Visible when connected) -->
-                        <div id="cloud-sync-controls" style="display: none; flex-direction: column; gap: 16px; border-top: 1px solid var(--border-color); padding-top: 20px;">
-                            <div class="form-group">
-                                <label class="form-label" style="display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none;">
-                                    <span>Sincronização Automática</span>
-                                    <input type="checkbox" id="cloud-auto-sync-checkbox" checked style="width: 18px; height: 18px; accent-color: var(--primary);">
-                                </label>
-                                <span class="text-muted" style="font-size: 0.75rem;">Sincroniza em segundo plano a cada 30 segundos de forma automática.</span>
-                            </div>
-                            
-                            <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;">
-                                <button class="btn btn-success" id="btn-cloud-sync-now" style="width: 100%;">
-                                    <i class="fa-solid fa-arrows-rotate" id="btn-sync-icon"></i> Sincronizar Agora
-                                </button>
-                                <span id="cloud-last-sync-time" class="text-muted" style="font-size: 0.75rem; text-align: center;">Nenhuma sincronização realizada ainda nesta sessão.</span>
-                            </div>
+                        <div id="cloud-online-indicator" style="display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 0.8rem; color: var(--text-secondary); padding: 8px;">
+                            <span id="cloud-online-dot" style="width: 8px; height: 8px; border-radius: 50%; background-color: var(--success);"></span>
+                            <span id="cloud-online-text">Online</span>
                         </div>
                     </div>
 
-                    <!-- Right: Google Client ID Setup & Instructions -->
+                    <!-- Right: Migration + Project Info -->
                     <div class="glass-card">
                         <h3 class="card-title">
-                            <i class="fa-solid fa-sliders"></i>
-                            Configuração do Google Cloud
+                            <i class="fa-solid fa-database"></i>
+                            Banco de Dados Compartilhado
                         </h3>
 
-                        <div class="form-group" style="margin-bottom: 8px;">
-                            <label for="google-client-id-input" class="form-label">Google OAuth Client ID</label>
+                        <p style="font-size: 0.85rem; color: var(--text-secondary); line-height: 1.6;">
+                            Todos os operadores logados nesta conta Firebase compartilham o mesmo banco de dados.
+                            Cadastros, encomendas e entregas aparecem em tempo real em qualquer dispositivo.
+                        </p>
+
+                        <!-- Migration Card (only shown when there's local data not yet imported) -->
+                        <div id="migration-card" style="display: none; border: 1px dashed var(--warning); background: rgba(245, 158, 11, 0.06); border-radius: var(--radius-md); padding: 16px; margin-top: 16px;">
+                            <h4 style="font-family: var(--font-heading); font-size: 1rem; color: var(--warning); display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                                <i class="fa-solid fa-upload"></i>
+                                Importar dados locais
+                            </h4>
+                            <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 12px;">
+                                Detectamos dados antigos no seu navegador (do modo offline anterior). Importe-os para a nuvem para compartilhar com os outros dispositivos.
+                            </p>
+                            <div id="migration-summary" style="font-size: 0.8rem; color: var(--text-primary); margin-bottom: 12px; padding: 8px 12px; background: var(--bg-primary); border-radius: var(--radius-sm);">—</div>
                             <div style="display: flex; gap: 8px;">
-                                <input type="password" id="google-client-id-input" class="form-input" placeholder="Cole aqui seu Client ID do Google Cloud Console..." style="font-family: monospace; font-size: 0.85rem;">
-                                <button class="btn btn-secondary" id="btn-toggle-client-id-visibility" title="Mostrar/Ocultar" aria-label="Mostrar ou ocultar ID do cliente">
-                                    <i class="fa-regular fa-eye"></i>
+                                <button class="btn btn-success btn-sm" id="btn-import-local-data" style="flex: 1;">
+                                    <i class="fa-solid fa-cloud-arrow-up"></i> Importar para a Nuvem
+                                </button>
+                                <button class="btn btn-secondary btn-sm" id="btn-dismiss-migration">
+                                    Descartar
                                 </button>
                             </div>
-                            <span class="text-muted" style="font-size: 0.75rem;">Esse ID é necessário para que a sua aplicação possa se comunicar com o Google Drive de forma segura.</span>
-                        </div>
-                        
-                        <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: -4px; margin-bottom: 8px;">
-                            <button class="btn btn-success btn-sm" id="btn-save-client-id" style="font-size: 0.8rem; padding: 6px 12px;">
-                                <i class="fa-solid fa-floppy-disk"></i> Salvar Configuração
-                            </button>
                         </div>
 
-                        <!-- Step-by-Step Accordion -->
-                        <div style="border-top: 1px solid var(--border-color); padding-top: 20px; display: flex; flex-direction: column; gap: 12px;">
-                            <h4 style="font-family: var(--font-heading); font-size: 1rem; color: var(--primary);">
-                                <i class="fa-solid fa-circle-info"></i>
-                                Como obter seu Google Client ID? (Grátis em 2 min)
-                            </h4>
-                            
-                            <div style="background-color: var(--bg-primary); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 16px; font-size: 0.8rem; display: flex; flex-direction: column; gap: 14px; line-height: 1.6;">
-                                <div style="display: flex; gap: 12px;">
-                                    <div style="width: 22px; height: 22px; background-color: var(--primary); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; flex-shrink: 0;">1</div>
-                                    <div>
-                                        <strong>Criar Projeto no Google Cloud</strong>
-                                        <p style="color: var(--text-secondary); font-size: 0.75rem;">Acesse o <a href="https://console.cloud.google.com/" target="_blank" style="color: var(--primary); text-decoration: underline;">Google Cloud Console</a>, faça login com sua conta Google e clique no menu superior para criar um novo projeto gratuito (e.g. "CondoSafe").</p>
-                                    </div>
-                                </div>
-                                <div style="display: flex; gap: 12px;">
-                                    <div style="width: 22px; height: 22px; background-color: var(--primary); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; flex-shrink: 0;">2</div>
-                                    <div>
-                                        <strong>Configurar Tela de Consentimento</strong>
-                                        <p style="color: var(--text-secondary); font-size: 0.75rem;">Vá no menu lateral em <strong>APIs e Serviços > Tela de permissão OAuth</strong>. Escolha a opção "Externo", dê um nome para o app (e.g. "CondoSafe") e coloque seu e-mail. Avance até o fim.</p>
-                                    </div>
-                                </div>
-                                <div style="display: flex; gap: 12px;">
-                                    <div style="width: 22px; height: 22px; background-color: var(--primary); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; flex-shrink: 0;">3</div>
-                                    <div>
-                                        <strong>Criar Credencial Web Client ID</strong>
-                                        <p style="color: var(--text-secondary); font-size: 0.75rem;">Vá em <strong>Credenciais > Criar Credenciais > ID do cliente OAuth</strong>. Escolha "Aplicativo da Web". Em "Origens JavaScript autorizadas", adicione as URLs locais e de hospedagem que você usa (ex: <code>http://localhost:3000</code> ou <code>http://127.0.0.1:3000</code>). Clique em Criar, copie o <strong>ID do cliente</strong> gerado e cole no campo acima!</p>
-                                    </div>
-                                </div>
+                        <!-- Stats -->
+                        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 20px;">
+                            <div style="background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 12px; text-align: center;">
+                                <div style="font-size: 1.5rem; font-weight: 700; color: var(--primary);" id="cloud-stat-residents">0</div>
+                                <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Moradores</div>
+                            </div>
+                            <div style="background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 12px; text-align: center;">
+                                <div style="font-size: 1.5rem; font-weight: 700; color: var(--success);" id="cloud-stat-packages">0</div>
+                                <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Encomendas</div>
+                            </div>
+                            <div style="background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 12px; text-align: center;">
+                                <div style="font-size: 1.5rem; font-weight: 700; color: var(--warning);" id="cloud-stat-logs">0</div>
+                                <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Registros</div>
                             </div>
                         </div>
                     </div>
