@@ -1,9 +1,10 @@
-const CACHE_NAME = 'condosafe-v1';
+const CACHE_NAME = 'condosafe-v2';
 const CORE_ASSETS = [
   './',
   './index.html',
   './styles.css',
   './app.js',
+  './firebase-config.js',
   './manifest.webmanifest',
   './icon.svg'
 ];

@@ -1694,20 +1694,24 @@ const App = {
     // 9. FIREBASE AUTH & REAL-TIME SYNC ENGINE
     // ==========================================
     bootstrapAuth() {
-        // Step 1: Need firebaseConfig in localStorage to even initialize Firebase
-        const stored = localStorage.getItem('condosafe_firebase_config');
-        if (!stored) {
-            this.showAuthStep('firebase-config');
-            return;
-        }
-        let cfg;
-        try {
-            cfg = JSON.parse(stored);
-        } catch (e) {
-            console.error('Invalid stored firebaseConfig:', e);
-            localStorage.removeItem('condosafe_firebase_config');
-            this.showAuthStep('firebase-config');
-            return;
+        // Step 1: Resolve firebaseConfig. Precedence:
+        //   1. window.CONDOSAFE_FIREBASE_CONFIG (committed in firebase-config.js)
+        //   2. localStorage override (manual paste UI, kept as escape hatch)
+        let cfg = window.CONDOSAFE_FIREBASE_CONFIG || null;
+        if (!cfg) {
+            const stored = localStorage.getItem('condosafe_firebase_config');
+            if (!stored) {
+                this.showAuthStep('firebase-config');
+                return;
+            }
+            try {
+                cfg = JSON.parse(stored);
+            } catch (e) {
+                console.error('Invalid stored firebaseConfig:', e);
+                localStorage.removeItem('condosafe_firebase_config');
+                this.showAuthStep('firebase-config');
+                return;
+            }
         }
 
         try {
